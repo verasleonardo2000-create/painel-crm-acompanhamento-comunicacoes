@@ -479,9 +479,13 @@ textarea.askinput.alto{height:auto;min-height:96px;resize:vertical;padding:9px 1
     <label for="loginEmail">Seu e-mail da empresa</label>
     <input id="loginEmail" type="email" required autocomplete="email"
            placeholder="voce@betdasorte.com" spellcheck="false">
-    <button class="btn primary" id="loginBt" type="submit">Receber link de acesso</button>
+    <label for="loginSenha">Senha</label>
+    <input id="loginSenha" type="password" autocomplete="current-password" placeholder="••••••••">
+    <button class="btn primary" id="loginBt" type="submit">Entrar</button>
+    <button class="btn" id="loginLinkBt" type="button">Prefiro receber um link por e-mail</button>
     <div class="aviso" id="loginAviso" hidden></div>
-    <p class="rodape">Você recebe um link por e-mail e entra clicando nele — não existe senha.</p>
+    <p class="rodape">Entre com a senha, ou peça um link por e-mail e clique nele.
+      Nos dois casos, só entra quem está liberado na lista da equipe.</p>
   </form>
 </div>
 
@@ -951,21 +955,48 @@ function escondeLogin(){
   document.querySelector(".app").style.display = "";
 }
 
-async function pedeLink(e){
-  e.preventDefault();
-  const email = document.getElementById("loginEmail").value.trim().toLowerCase();
-  const bt = document.getElementById("loginBt");
+function emailDigitado(){ return document.getElementById("loginEmail").value.trim().toLowerCase(); }
+function diz(txt){
+  const av = document.getElementById("loginAviso");
+  av.hidden = !txt; av.textContent = txt || "";
+}
+/* mensagens do Supabase vêm em inglês e técnicas demais para quem só quer entrar */
+function traduzErro(e){
+  const m = (e && e.message || "").toLowerCase();
+  if(m.includes("invalid login credentials")) return "E-mail ou senha incorretos.";
+  if(m.includes("rate limit"))                return "O envio de e-mails atingiu o limite por hora. Entre com a senha, ou tente o link daqui a pouco.";
+  if(m.includes("email not confirmed"))       return "Esta conta ainda não foi confirmada. Avise o Leo.";
+  if(m.includes("signups not allowed") || m.includes("not allowed for otp"))
+                                              return "Este e-mail não está cadastrado no painel. Avise o Leo.";
+  return (e && e.message) || "Não consegui entrar.";
+}
+
+/* Entrar com senha. É o caminho principal: não depende de e-mail nenhum. */
+async function entraComSenha(e){
+  if(e) e.preventDefault();
+  const email = emailDigitado(), senha = document.getElementById("loginSenha").value;
   if(!email) return;
+  if(!senha) return pedeLink();          // sem senha digitada, cai no link
+  const bt = document.getElementById("loginBt");
+  bt.disabled = true; bt.textContent = "Entrando…";
+  const {error} = await sb.auth.signInWithPassword({email, password: senha});
+  bt.disabled = false; bt.textContent = "Entrar";
+  if(error){ diz(traduzErro(error)); return; }
+  location.reload();                     // a sessão está guardada; o boot pega daqui
+}
+
+/* Alternativa sem senha: link no e-mail. */
+async function pedeLink(){
+  const email = emailDigitado();
+  if(!email){ diz("Escreva seu e-mail primeiro."); return; }
+  const bt = document.getElementById("loginLinkBt");
   bt.disabled = true; bt.textContent = "Enviando…";
   const {error} = await sb.auth.signInWithOtp({
     email, options:{emailRedirectTo: location.origin + location.pathname, shouldCreateUser:false}
   });
-  bt.disabled = false; bt.textContent = "Receber link de acesso";
-  const av = document.getElementById("loginAviso");
-  av.hidden = false;
-  av.textContent = error
-    ? "Não consegui enviar: " + error.message
-    : "Link enviado para " + email + ". Abra o e-mail e clique — pode demorar um minuto.";
+  bt.disabled = false; bt.textContent = "Prefiro receber um link por e-mail";
+  diz(error ? traduzErro(error)
+            : "Link enviado para " + email + ". Abra o e-mail e clique — pode demorar um minuto.");
 }
 
 async function boot(){
@@ -976,7 +1007,8 @@ async function boot(){
     mostraLogin("Não consegui carregar a biblioteca do Supabase. Recarregue a página.");
     return;
   }
-  document.getElementById("loginForm").onsubmit = pedeLink;
+  document.getElementById("loginForm").onsubmit = entraComSenha;
+  document.getElementById("loginLinkBt").onclick = pedeLink;
   document.getElementById("btnSair").onclick = async ()=>{
     flushNow(); await sb.auth.signOut(); location.reload();
   };
