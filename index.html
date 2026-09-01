@@ -506,7 +506,7 @@ textarea.askinput.alto{height:auto;min-height:96px;resize:vertical;padding:9px 1
 
   <div class="sync wait" id="syncBar">
     <span class="dotp"></span><span id="syncMsg">Conectando…</span>
-    <span class="who"><b id="euNome">—</b><button class="btn sm" id="btnSair" title="Sair da conta">Sair</button></span>
+    <span class="who"><b id="euNome">—</b><button class="btn sm" id="btnSenha" title="Definir uma senha para entrar sem depender de e-mail">Senha</button><button class="btn sm" id="btnSair" title="Sair da conta">Sair</button></span>
   </div>
 
   <div id="bannerHost"></div>
@@ -999,6 +999,24 @@ async function pedeLink(){
             : "Link enviado para " + email + ". Abra o e-mail e clique — pode demorar um minuto.");
 }
 
+/* Trocar a própria senha NÃO envia e-mail: o painel fala direto com o Supabase,
+   que guarda só o hash. Por isso este caminho não esbarra no limite de envios.
+   (Só passaria a enviar se "Secure password change" fosse ligada lá.) */
+async function defineSenha(){
+  if(!sb) return;
+  const s = await pergunta({
+    titulo: "Definir sua senha",
+    texto: "Com uma senha você entra direto, sem depender do link por e-mail. " +
+           "Ela é sua: ninguém mais fica sabendo, nem quem administra o painel.",
+    campo: "Nova senha (mínimo 8 caracteres)", senha: true, ok: "Salvar"
+  });
+  if(s === null) return;
+  if(String(s).length < 8){ toast("Use pelo menos 8 caracteres"); return; }
+  const {error} = await sb.auth.updateUser({password: String(s)});
+  toast(error ? "Não consegui definir: " + traduzErro(error)
+              : "Senha definida — da próxima vez você entra direto por ela");
+}
+
 async function boot(){
   syncState = "wait"; paintSync();
   try{
@@ -1009,6 +1027,7 @@ async function boot(){
   }
   document.getElementById("loginForm").onsubmit = entraComSenha;
   document.getElementById("loginLinkBt").onclick = pedeLink;
+  document.getElementById("btnSenha").onclick = defineSenha;
   document.getElementById("btnSair").onclick = async ()=>{
     flushNow(); await sb.auth.signOut(); location.reload();
   };
@@ -2500,7 +2519,9 @@ function pergunta(opts){
     document.getElementById("askBody").innerHTML = !o.campo ? ""
       : o.multilinha
         ? `<textarea class="askinput alto" id="askInput" placeholder="${esc(o.campo)}">${esc(o.valor||"")}</textarea>`
-        : `<input class="askinput" id="askInput" value="${esc(o.valor||"")}" placeholder="${esc(o.campo)}" maxlength="60">`;
+        : o.senha
+          ? `<input class="askinput" id="askInput" type="password" placeholder="${esc(o.campo)}" autocomplete="new-password">`
+          : `<input class="askinput" id="askInput" value="${esc(o.valor||"")}" placeholder="${esc(o.campo)}" maxlength="60">`;
     const yes = document.getElementById("askYes");
     yes.textContent = o.ok || "Confirmar";
     yes.classList.toggle("perigo", !!o.perigo);
