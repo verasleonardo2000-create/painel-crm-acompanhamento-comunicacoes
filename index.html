@@ -737,6 +737,11 @@ let euSou = "";                // e-mail de quem está logado
 let saveTimer = null, saving = false, dirty = false;
 let syncState = "wait", syncNote = "", ultimoCodigo = "";
 let cfgGravada = "";           // foto da configuração já salva
+/* O que ESTA aba acabou de gravar, para reconhecer o próprio eco quando ele
+   voltar pelo canal ao vivo. Antes o eco era identificado pelo autor — o que
+   descartava também o que você mexe em outra aba ou no celular, deixando
+   aquelas cópias congeladas e prontas para empurrar estado velho. */
+const meusEnvios = new Map();
 let gravado = new Map();       // foto das campanhas já salvas, por id
 
 /* ---------- tradução entre o painel e a tabela ---------- */
@@ -785,6 +790,7 @@ async function doSave(){
     if(mudadas.length){
       const {error} = await sb.from("campanhas").upsert(mudadas.map(linhaDb));
       if(error) throw error;
+      mudadas.forEach(c => meusEnvios.set(c.id, JSON.stringify(linhaDb(c))));
     }
     // 2) o que você excluiu — vira exclusão lógica, nunca some do banco
     const sumidas = [...gravado.keys()].filter(id => !campanhas.some(c => c.id === id));
@@ -830,8 +836,16 @@ function ligaAoVivo(){
 /* Não redesenha por cima de quem está digitando: espera o campo fechar.
    Perder o que a pessoa está escrevendo seria pior que atrasar 1 segundo. */
 function podeAplicar(){
+  // 1) alteração sua ainda não gravada: recarregar agora a apagaria
+  if(dirty || saving) return false;
+  // 2) você está no meio de alguma coisa — redesenhar arrancaria o que está aberto
   if(typeof editando === "function" && editando()) return false;
+  if(document.querySelector("input.calpick")) return false;            // calendário de data
+  if(document.getElementById("pop").dataset.open) return false;        // lista de status
   if(document.getElementById("askModal").dataset.open) return false;
+  if(document.getElementById("stModal").dataset.open) return false;    // editor de status
+  if(document.getElementById("lgModal") && document.getElementById("lgModal").dataset.open) return false;
+  if(document.getElementById("drawer").dataset.open) return false;     // gaveta da campanha
   return true;
 }
 function adiaAplicacao(){
@@ -846,7 +860,14 @@ function adiaAplicacao(){
 function chegouCampanha(p){
   const r = p.new && p.new.id ? p.new : p.old;
   if(!r) return;
-  if(p.new && p.new.alterado_por && p.new.alterado_por === euSou) return;  // eco do meu próprio salvamento
+  // eco desta aba: o conteúdo é exatamente o que ela acabou de mandar
+  if(p.new && p.new.id){
+    const enviei = meusEnvios.get(p.new.id);
+    if(enviei && enviei === JSON.stringify(linhaDb(daLinha(p.new)))){
+      meusEnvios.delete(p.new.id);   // o eco chega uma vez só
+      return;
+    }
+  }
   if(!podeAplicar()){ adiaAplicacao(); return; }
   aplicaUma(p);
 }
