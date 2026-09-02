@@ -1589,6 +1589,11 @@ function abreEdicao(el, charInicial){
   inp.type = ehData ? "text" : col.kind==="time" ? "time" : "text";
   inp.className = "ci" + (k==="nome" ? " nome" : "") + (ehData ? " num" : "");
   inp.dataset.r = r; inp.dataset.c = ci; inp.dataset.kind = "field"; inp.dataset.k = k;
+  /* Guarda QUAL campanha está sendo editada, não em que linha ela estava.
+     Mudar data ou hora reordena a tabela: quando a edição fecha, aquela posição
+     pode já pertencer a outra campanha, e o valor ia parar nas duas.
+     O id nunca muda — nem quando o nome, a data ou a posição mudam. */
+  inp.dataset.cid = camp.id;
   inp.setAttribute("aria-label", col.n);
   if(ehData){ inp.dataset.fmt = "data"; inp.placeholder = "dd/mm/aaaa"; inp.inputMode = "numeric"; inp.maxLength = 10; }
   if(col.list) inp.setAttribute("list", col.list);
@@ -1617,7 +1622,7 @@ function abreEdicao(el, charInicial){
 /* destino: {r,c} para onde ir depois de confirmar, ou null */
 function fechaEdicao(inp, destino, cancelar){
   const r = +inp.dataset.r, ci = +inp.dataset.c, k = inp.dataset.k;
-  const camp = rowCampanha(r);
+  const camp = (inp.dataset.cid && byId(inp.dataset.cid)) || rowCampanha(r);
   if(!camp){ render(); return; }
   const antigo = inp.dataset.orig || "";
   let novo = cancelar ? antigo : inp.value;
@@ -1643,8 +1648,10 @@ function fechaEdicao(inp, destino, cancelar){
     if(destino && destino.r !== r) setTimeout(()=>focusCell(Math.min(destino.r, rowIds.length-1), destino.c), 0);
     return;
   }
+  const rAtual = rowIds.indexOf(camp.id);
+  if(rAtual < 0){ render(); return; }        // a linha saiu da vista: redesenha inteiro
   const tpl = document.createElement("template");
-  tpl.innerHTML = displayHTML(camp, r, ci, COLS[ci]).trim();
+  tpl.innerHTML = displayHTML(camp, rAtual, ci, COLS[ci]).trim();
   const celulaNova = tpl.content.firstChild;
   inp.replaceWith(celulaNova);
   renderKPIs();
