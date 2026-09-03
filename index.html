@@ -357,6 +357,16 @@ tr.addrow td{border-bottom:0;padding:10px 14px 12px}
 .pop .txtopt .ic{width:15px;text-align:center;opacity:.65;flex:0 0 auto}
 .pop .txtopt.danger:hover{color:var(--c-alert)}
 .pop .sep{height:1px;background:var(--line);margin:4px 6px}
+/* opção de lista: texto simples, sem pastilha */
+.popt.txt{padding:8px 10px;text-align:left;font-size:12.5px;color:var(--ink-2);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.popt.txt:hover{color:var(--ink)}
+.popt.txt[aria-current="true"]{background:var(--accent-soft);color:var(--accent);font-weight:600}
+/* célula que abre lista: setinha à direita, como nas de status */
+.cellv.listcell{cursor:pointer}
+.cellv.listcell .cv{margin-left:auto;font-size:10px;opacity:.45;font-style:normal;flex:0 0 auto;
+  transform:translateY(1px)}
+.cellv.listcell:hover .cv{opacity:.9}
 .pop.ctx{width:auto;min-width:212px}
 .pop.ctx .ph{padding-bottom:5px;max-width:212px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   text-transform:none;letter-spacing:0;font-size:12px;font-weight:600;color:var(--ink)}
@@ -658,13 +668,26 @@ function nomeCanal(k){ const c = CANAIS.find(x=>x.k===k); return c ? c.n : k; }
 
 const TIPOS = ["Cassino","Esportes","Gamificação","Institucional"];
 
+/* Colunas que abrem uma lista de opções, como as de status: Enter abre, setas
+   andam, 1–9 escolhe direto. `livre` marca a coluna que aceita um nome fora da
+   lista, digitado pela opção "Outro…". */
+/* Marcadores das opções especiais. Precisam ser texto comum: eles viajam por um
+   atributo HTML, e caractere de controle é corrompido pelo navegador na volta. */
+const VAZIO = "__em_branco__";
+const OUTRO = "__outro__";
+const OPCOES_LISTA = {
+  tipo: ()=> TIPOS.map(x=>({v:x, r:x})).concat([{v:VAZIO, r:"—  (em branco)"}]),
+  resp: ()=> [{v:"Sacra", r:"Sacra"}, {v:"LV", r:"LV"},
+              {v:OUTRO, r:"Outro…"}, {v:VAZIO, r:"—  (em branco)"}],
+};
+
 /* As duas primeiras colunas ficam congeladas na rolagem horizontal. */
 const COLS = [
   {k:"data", n:"Data",     kind:"date",   w:108},
   {k:"nome", n:"Campanha", kind:"text",   w:288},
   {k:"hora", n:"Hora",     kind:"time",   w:74},
-  {k:"tipo", n:"Tipo",     kind:"select", w:116},
-  {k:"resp", n:"Resp.",    kind:"text",   w:96, list:"respList"},
+  {k:"tipo", n:"Tipo",     kind:"lista",  w:116},
+  {k:"resp", n:"Resp.",    kind:"lista",  w:96, livre:true},
 ].concat(CANAIS.map(c=>({k:c.k, n:c.n, kind:"status", w:120})));
 const NCOL = COLS.length;
 const NSTICKY = 2;
@@ -1264,9 +1287,12 @@ function cellHTML(c, r, ci, col){
       data-kind="status" data-ch="${col.k}" role="gridcell" title="${esc(t)}" aria-label="${esc(t)}"
       >${pillHTML(st,"chev", nota, true)}</div></td>`;
   }
-  if(col.kind === "select"){
-    return `<td class="gc${sticky}${pad}"><select class="ci" ${at} data-kind="field" data-k="tipo" aria-label="Tipo">
-      <option value="">—</option>${TIPOS.map(t=>`<option${t===c.tipo?" selected":""}>${t}</option>`).join("")}</select></td>`;
+  if(col.kind === "lista"){
+    const v = c[col.k] || "";
+    const t = col.n + ": " + (v || "vazio");
+    return `<td class="gc${sticky}${pad}"><div class="cellv listcell" tabindex="0" ${at}
+      data-kind="lista" data-k="${col.k}" role="gridcell" title="${esc(t)}" aria-label="${esc(t)}"
+      >${v ? `<span>${esc(v)}</span>` : `<span class="ph">—</span>`}<i class="cv">▾</i></div></td>`;
   }
   return `<td class="gc${sticky}${pad}">${displayHTML(c, r, ci, col)}</td>`;
 }
@@ -1311,6 +1337,16 @@ function parseData(txt){
   if(isNaN(t.getTime()) || t.getDate() !== dia) return "";   // 31/02 não existe
   return iso;
 }
+/* Vai pondo as barras enquanto a pessoa digita: 0509 -> 05/09, 05092026 -> 05/09/2026.
+   Se ela digitar a barra por conta própria, respeita o que escreveu — 5/9 continua valendo. */
+function mascaraData(txt){
+  const s = String(txt == null ? "" : txt);
+  if(/[\/.\-]/.test(s)) return s.replace(/[.\-]/g, "/").split("/").slice(0,3).join("/");
+  const d = s.replace(/\D/g, "").slice(0, 8);
+  if(d.length > 4) return d.slice(0,2) + "/" + d.slice(2,4) + "/" + d.slice(4);
+  if(d.length > 2) return d.slice(0,2) + "/" + d.slice(2);
+  return d;
+}
 function dataBR(iso){
   const p = String(iso).split("-");
   return p.length===3 ? p[2]+"/"+p[1]+"/"+p[0] : iso;
@@ -1343,7 +1379,7 @@ function renderGrid(){
     h += `<tr class="addrow"><td colspan="${NCOL+2}">
       <button class="addbtn" data-act="new">+ adicionar campanha</button></td></tr>`;
   }
-  h += `</tbody></table><datalist id="respList">${[...new Set(campanhas.map(x=>x.resp).filter(Boolean))].map(r=>`<option>${esc(r)}</option>`).join("")}</datalist>`;
+  h += `</tbody></table>`;
   wrap.innerHTML = h;
   aplicaLarguras();
   renderGridFoot(list.length, podeAdicionar, ocultasPorIdade());
@@ -1459,7 +1495,7 @@ function rowCampanha(r){ return byId(rowIds[r]); }
    e já gravada — mesmo sem nome. */
 function novaLinha(dataISO){
   marco("nova campanha");
-  const c = {id:uid(), data:dataISO||TODAY, hora:"", nome:"", tipo:"", resp:me||"", canais:blankCanais(), notas:{}, obs:"", link:""};
+  const c = {id:uid(), data:dataISO||TODAY, hora:"", nome:"", tipo:"", resp:"", canais:blankCanais(), notas:{}, obs:"", link:""};
   campanhas.push(c);
   markDirty();
   // se o período em uso escondesse a linha recém-criada, abre o histórico inteiro
@@ -1616,7 +1652,7 @@ function abreEdicao(el, charInicial){
      O id nunca muda — nem quando o nome, a data ou a posição mudam. */
   inp.dataset.cid = camp.id;
   inp.setAttribute("aria-label", col.n);
-  if(ehData){ inp.dataset.fmt = "data"; inp.placeholder = "dd/mm/aaaa"; inp.inputMode = "numeric"; inp.maxLength = 10; }
+  if(ehData){ inp.dataset.fmt = "data"; inp.placeholder = "ddmmaaaa"; inp.inputMode = "numeric"; inp.maxLength = 10; }
   if(col.list) inp.setAttribute("list", col.list);
   inp.dataset.orig = camp[k] || "";
   inp.value = charInicial != null ? charInicial
@@ -1631,6 +1667,8 @@ function abreEdicao(el, charInicial){
   }
   inp.oninput = ()=>{
     if(inp.dataset.fmt === "data"){
+      const m = mascaraData(inp.value);
+      if(m !== inp.value){ inp.value = m; try{ inp.setSelectionRange(m.length, m.length); }catch(err){} }
       const iso = parseData(inp.value);
       if(iso || !inp.value.trim()){ camp[k] = iso; dirty = true; paintSync(); renderKPIs(); }
       return;   // enquanto a data estiver pela metade, não mexe no dado
@@ -1694,8 +1732,8 @@ gridWrap.addEventListener("change", (e)=>{
 gridWrap.addEventListener("dblclick", (e)=>{
   if(e.target.closest("[data-cal]")) return;
   const el = e.target.closest(".cellv"); if(!el) return;
-  // célula de status não vira campo de texto: o clique anterior já abriu a lista
-  if(el.dataset.kind === "status"){ e.preventDefault(); return; }
+  // status e listas não viram campo de texto: o clique já abriu as opções
+  if(el.dataset.kind === "status" || el.dataset.kind === "lista"){ e.preventDefault(); return; }
   abreEdicao(el, null); e.preventDefault();
 });
 
@@ -1766,6 +1804,7 @@ gridWrap.addEventListener("keydown", (e)=>{
   const el = e.target.closest("[data-r]"); if(!el) return;
   const r = +el.dataset.r, c = +el.dataset.c;
   const isStatus  = el.dataset.kind === "status";
+  const isLista   = el.dataset.kind === "lista";
   const isDisplay = el.classList.contains("cellv");
   const isInput   = el.tagName === "INPUT";
   const isTexto   = isInput && el.type === "text";
@@ -1871,6 +1910,7 @@ gridWrap.addEventListener("keydown", (e)=>{
     case "Enter":
       // igual ao Excel: Enter anda para baixo; F2, duplo clique ou digitar é que editam
       if(isStatus){ openPop(el); e.preventDefault(); return; }
+      if(isLista){ abreLista(el); e.preventDefault(); return; }
       if(isInput){ sair(1,0); return; }
       move(1,0); return;
     case "F2":
@@ -1882,6 +1922,18 @@ gridWrap.addEventListener("keydown", (e)=>{
       return;
     case "Home": if(!isInput){ focusCell(r,0); e.preventDefault(); } return;
     case "End":  if(!isInput){ focusCell(r,NCOL-1); e.preventDefault(); } return;
+  }
+  if(isLista){
+    if(e.key === " "){ abreLista(el); e.preventDefault(); return; }
+    if(e.key === "Backspace" || e.key === "Delete"){
+      const camp = rowCampanha(r);
+      if(camp && camp[el.dataset.k]){ marco(COLS[c].n.toLowerCase()); camp[el.dataset.k] = ""; }
+      pendingFocus = {id: rowIds[r], c}; render(); markDirty();
+      e.preventDefault(); return;
+    }
+    const n = parseInt(e.key,10);
+    if(!isNaN(n) && n >= 1 && n <= 9){ abreLista(el); e.preventDefault(); return; }
+    return;   // digitar letra não abre editor de texto aqui
   }
   if(isStatus){
     if(e.key === " "){ openPop(el); e.preventDefault(); return; }
@@ -1964,6 +2016,12 @@ document.addEventListener("click", (e)=>{
   if(stcel && recliqueStatus){
     recliqueStatus = false;
     stcel.focus({preventScroll:true}); openPop(stcel); return;
+  }
+  // Tipo e Resp.: um clique já abre a lista (é o que se espera de um seletor)
+  const lcel = e.target.closest("[data-kind='lista']");
+  if(lcel && gridWrap.contains(lcel) && !e.shiftKey){
+    recliqueStatus = false;
+    lcel.focus({preventScroll:true}); abreLista(lcel); return;
   }
   recliqueStatus = false;
   if(!e.target.closest("#pop")) closePop();
@@ -2077,10 +2135,13 @@ function poeValor(r, ci, v){
     if(!h && v) return false;
     camp.hora = h || ""; return true;
   }
-  if(col.kind === "select"){
-    const t = TIPOS.find(x=>semAcento(x) === semAcento(v));
-    if(!t && v) return false;
-    camp.tipo = t || ""; return true;
+  if(col.kind === "lista"){
+    if(!v){ camp[col.k] = ""; return true; }
+    const validas = OPCOES_LISTA[col.k]().map(o=>o.v).filter(x => x !== VAZIO && x !== OUTRO);
+    const achou = validas.find(x => semAcento(x) === semAcento(v));
+    if(achou){ camp[col.k] = achou; return true; }
+    if(col.livre){ camp[col.k] = v; return true; }   // Resp. aceita nome de fora
+    return false;                                     // Tipo não inventa valor
   }
   camp[col.k] = v; return true;
 }
@@ -2158,7 +2219,50 @@ function openPop(btn){
   popCtx = {id: rowIds[+btn.dataset.r], ch: btn.dataset.ch, colIdx: +btn.dataset.c, anchor: btn};
   desenhaPop();
 }
+/* Tipo e Resp. usam o MESMO popup dos status — por isso herdam de graça as
+   setas, o Esc, os atalhos 1–9 e o reposicionamento quando a grade redesenha. */
+function abreLista(cel){
+  popCtx = {id: rowIds[+cel.dataset.r], k: cel.dataset.k, colIdx: +cel.dataset.c, anchor: cel};
+  desenhaPop();
+}
+function desenhaListaPop(){
+  const {id, k, anchor} = popCtx;
+  const c = byId(id); if(!c){ closePop(); return; }
+  const atual = c[k] || "";
+  let opts = OPCOES_LISTA[k]();
+  // valor que não está na lista (vindo da planilha, do Trello ou de "Outro…")
+  // aparece no topo para não se perder de vista
+  if(atual && !opts.some(o => o.v === atual)) opts = [{v:atual, r:atual}].concat(opts);
+
+  const col = COLS.find(x => x.k === k);
+  pop.innerHTML = `<div class="ph">${esc(col.n)}</div>`
+    + opts.map(o => `<button class="popt txt" data-lista="${esc(o.v)}" role="menuitem"
+        aria-current="${o.v === atual}">${esc(o.r)}</button>`).join("");
+  pop.dataset.open = "1";
+  posicionaPop(anchor);
+  const sel = pop.querySelector('.popt[aria-current="true"]') || pop.querySelector(".popt");
+  if(sel) sel.focus({preventScroll:true});
+
+  pop.querySelectorAll("[data-lista]").forEach(b => b.onclick = async ()=>{
+    let v = b.dataset.lista;
+    if(v === OUTRO){
+      closePop();
+      const digitado = await pergunta({
+        titulo: "Outro " + col.n.toLowerCase().replace(".",""),
+        texto: "Escreva o nome. Ele fica só nesta campanha — a lista continua com Sacra e LV.",
+        campo: "Nome", valor: (atual && !OPCOES_LISTA[k]().some(o=>o.v===atual)) ? atual : "", ok: "Usar"
+      });
+      if(digitado === null) return;
+      v = String(digitado).trim();
+    }else if(v === VAZIO) v = "";
+    const cc = byId(id); if(!cc) return;
+    if((cc[k] || "") !== v){ marco(col.n.toLowerCase()); cc[k] = v; }
+    pendingFocus = {id, c: popCtx ? popCtx.colIdx : 0};
+    closePop(); render(); markDirty();
+  });
+}
 function desenhaPop(){
+  if(popCtx && popCtx.k) return desenhaListaPop();
   const {id, ch, anchor} = popCtx;
   const c = byId(id); if(!c){ closePop(); return; }
   const cur = c.canais[ch] || "nc";
@@ -2244,7 +2348,8 @@ pop.addEventListener("keydown", (e)=>{
   const opcoes = [...pop.querySelectorAll(".popt")];
   if(!opcoes.length) return;
   const i = opcoes.indexOf(document.activeElement.closest(".popt"));
-  const vai = (n)=>{ opcoes[Math.min(Math.max(0,n), opcoes.length-1)].focus({preventScroll:true}); e.preventDefault(); };
+  // dá a volta: da primeira para a última e vice-versa
+  const vai = (n)=>{ const L = opcoes.length; opcoes[((n % L) + L) % L].focus({preventScroll:true}); e.preventDefault(); };
   switch(e.key){
     case "ArrowDown": vai(i < 0 ? 0 : i+1); return;
     case "ArrowUp":   vai(i < 0 ? opcoes.length-1 : i-1); return;
