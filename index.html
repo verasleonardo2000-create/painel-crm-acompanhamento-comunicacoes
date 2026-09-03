@@ -167,11 +167,16 @@ select.field{padding-right:26px;appearance:none;
   opacity:.8;flex:0 0 auto;margin-right:-2px}
 
 details.legend{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-3);box-shadow:var(--sh-1)}
-details.legend > summary{cursor:pointer;list-style:none;padding:10px 14px;font-size:12.5px;font-weight:500;color:var(--ink-2);
-  display:flex;align-items:center;gap:8px}
+/* A faixa inteira era clicável e o Leo abria a legenda sem querer o tempo todo.
+   Agora só o botãozinho da esquerda abre — o resto da faixa é texto morto. */
+details.legend > summary{cursor:default;list-style:none;padding:9px 14px;font-size:12.5px;font-weight:500;
+  color:var(--ink-2);display:flex;align-items:center;gap:9px;user-select:none}
 details.legend > summary::-webkit-details-marker{display:none}
-details.legend > summary::before{content:"▸";color:var(--ink-3);font-size:10px;transition:transform .15s}
-details.legend[open] > summary::before{transform:rotate(90deg)}
+.lgbt{display:inline-grid;place-items:center;width:22px;height:22px;flex:0 0 auto;cursor:pointer;
+  border:1px solid var(--line-2);border-radius:7px;background:var(--surface-2);color:var(--ink-2);
+  font-size:10px;line-height:1;transition:transform .15s,background .12s,border-color .12s,color .12s}
+.lgbt:hover{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+details.legend[open] .lgbt{transform:rotate(90deg)}
 details.legend .lgbody{padding:0 14px 13px;display:flex;flex-direction:column;gap:9px}
 .lgrow{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
 .lgrow .lgn{font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.07em;text-transform:uppercase;
@@ -219,6 +224,13 @@ tbody tr[data-urg] .sk0 .cellv .ph{color:inherit;opacity:.75}
 td.gc{padding:6px 5px;height:56px;vertical-align:middle}
 td.gc.st{text-align:left;padding:6px 6px 6px 3px}
 td.gc.pad{padding-left:11px}
+/* a alça de linha: faixa fina na borda esquerda da primeira célula.
+   Não precisa de position:relative — a célula já é sticky, que também posiciona. */
+.rowsel{position:absolute;left:0;top:0;bottom:0;width:11px;cursor:pointer;z-index:5}
+.rowsel::after{content:"";position:absolute;left:4px;top:9px;bottom:9px;width:3px;border-radius:2px;
+  background:transparent;transition:background .12s}
+tbody tr:hover .rowsel::after{background:var(--line-2)}
+.rowsel:hover::after{background:var(--accent)}
 
 .ci{width:100%;height:34px;border:0;background:transparent;padding:0 8px;font-size:13px;color:var(--ink);
   outline:none;font-family:var(--ui);border-radius:7px}
@@ -386,13 +398,19 @@ tr.addrow td{border-bottom:0;padding:10px 14px 12px}
 .scrim{position:fixed;inset:0;background:rgba(10,11,14,.36);backdrop-filter:blur(2px);z-index:150;opacity:0;
   pointer-events:none;transition:opacity .2s}
 .scrim[data-open]{opacity:1;pointer-events:auto}
-.drawer{position:fixed;top:0;right:0;bottom:0;width:min(460px,100vw);background:var(--surface);border-left:1px solid var(--line);
-  z-index:160;transform:translateX(100%);transition:transform .24s cubic-bezier(.3,.9,.3,1);display:flex;
-  flex-direction:column;box-shadow:var(--sh-3)}
-.drawer[data-open]{transform:none}
+/* Era uma gaveta colada na direita. Virou um diálogo centralizado — que é onde o
+   olho procura quando se abre uma campanha — e mais largo, porque os campos em
+   duas colunas ficavam apertados nos 460px de antes. */
+.drawer{position:fixed;inset:0;margin:auto;z-index:160;
+  width:min(760px,calc(100% - 32px));height:fit-content;max-height:min(88vh,900px);
+  background:var(--surface);border:1px solid var(--line);border-radius:16px;
+  display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--sh-3);
+  opacity:0;pointer-events:none;transform:translateY(10px) scale(.985);
+  transition:opacity .18s ease,transform .18s cubic-bezier(.3,.9,.3,1)}
+.drawer[data-open]{opacity:1;pointer-events:auto;transform:none}
 .drawer > header{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;gap:12px}
 .drawer > header h2{font-size:15px;font-weight:600;flex:1;line-height:1.35}
-.dbody{flex:1;overflow:auto;padding:16px 18px 24px}
+.dbody{flex:1;min-height:0;overflow:auto;padding:16px 20px 22px}
 .dfoot{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8px;background:var(--surface-2)}
 label.f{display:block;margin-bottom:11px}
 label.f > span{font-family:var(--mono);display:block;font-size:10px;font-weight:500;letter-spacing:.08em;
@@ -557,7 +575,8 @@ textarea.askinput.alto{height:auto;min-height:96px;resize:vertical;padding:9px 1
     <button class="btn sm" id="btnClear">Limpar</button>
   </div>
 
-  <details class="legend" id="legend"><summary>Legenda dos status — cada coluna tem sua própria lista</summary><div class="lgbody" id="lgbody"></div></details>
+  <details class="legend" id="legend"><summary><span class="lgbt" role="button" tabindex="0"
+    aria-label="Mostrar ou esconder a legenda" title="Mostrar ou esconder a legenda">&#9654;</span>Legenda dos status — cada coluna tem sua própria lista</summary><div class="lgbody" id="lgbody"></div></details>
 
   <div id="viewTabela">
     <div class="card"><div class="grid-wrap" id="gridWrap"></div><div class="gridfoot" id="gridFoot"></div></div>
@@ -707,6 +726,9 @@ const NSTICKY = 2;
 /* Não há mais carga inicial: as campanhas vêm do banco. */
 
 function blankCanais(){ const o={}; CANAIS.forEach(c=>o[c.k]="nc"); return o; }
+/* Campanha nova nasce com tudo em branco — quem preenche é o operador.
+   O "nc" continua sendo o valor de segurança para dado antigo ou desconhecido. */
+function canaisVazios(){ const o={}; CANAIS.forEach(c=>o[c.k]="vazio"); return o; }
 function normCanais(src){
   const o = blankCanais();
   CANAIS.forEach(ch=>{
@@ -1306,7 +1328,12 @@ function cellHTML(c, r, ci, col){
       data-kind="lista" data-k="${col.k}" role="gridcell" title="${esc(t)}" aria-label="${esc(t)}"
       >${v ? `<span>${esc(v)}</span>` : `<span class="ph">—</span>`}<i class="cv">▾</i></div></td>`;
   }
-  return `<td class="gc${sticky}${pad}">${displayHTML(c, r, ci, col)}</td>`;
+  // a primeira coluna ganha uma alça na borda esquerda que seleciona a linha toda,
+  // fazendo pela linha o que o clique no cabeçalho já fazia pela coluna
+  const alca = ci === 0
+    ? `<span class="rowsel" data-linha="${r}" role="button" tabindex="-1"
+         title="Selecionar a linha inteira" aria-label="Selecionar a linha inteira"></span>` : "";
+  return `<td class="gc${sticky}${pad}">${alca}${displayHTML(c, r, ci, col)}</td>`;
 }
 /* célula em repouso — só mostra o valor */
 function displayHTML(c, r, ci, col){
@@ -1507,7 +1534,7 @@ function rowCampanha(r){ return byId(rowIds[r]); }
    e já gravada — mesmo sem nome. */
 function novaLinha(dataISO){
   marco("nova campanha");
-  const c = {id:uid(), data:dataISO||TODAY, hora:"", nome:"", tipo:"", resp:"", canais:blankCanais(), notas:{}, obs:"", link:""};
+  const c = {id:uid(), data:dataISO||TODAY, hora:"", nome:"", tipo:"", resp:"", canais:canaisVazios(), notas:{}, obs:"", link:""};
   campanhas.push(c);
   markDirty();
   // se o período em uso escondesse a linha recém-criada, abre o histórico inteiro
@@ -1625,6 +1652,16 @@ gridWrap.addEventListener("click", (e)=>{
   if(e.shiftKey && selAnc){ estendePara(rowIds.length-1, c); }
   else { selAnc = {r:0, c}; selFoc = {r:rowIds.length-1, c}; pintaSelecao(); }
   const alvo = celulaEm(0, c); if(alvo) alvo.focus({preventScroll:true});
+});
+
+/* alça da linha: seleciona a linha inteira, como o cabeçalho faz com a coluna */
+gridWrap.addEventListener("click", (e)=>{
+  const h = e.target.closest("[data-linha]"); if(!h) return;
+  e.preventDefault(); e.stopPropagation();
+  const r = +h.dataset.linha;
+  if(e.shiftKey && selAnc) estendePara(r, NCOL - 1);
+  else { selAnc = {r, c:0}; selFoc = {r, c:NCOL - 1}; pintaSelecao(); }
+  const alvo = celulaEm(r, 0); if(alvo) alvo.focus({preventScroll:true});
 });
 
 /* clique numa célula: define a âncora; com Shift, estende */
@@ -2043,6 +2080,9 @@ document.addEventListener("click", (e)=>{
   recliqueStatus = false;
   if(!e.target.closest("#pop") && !cliqueVeioDoPop) closePop();
   cliqueVeioDoPop = false;
+  /* clicou fora da tabela: a faixa selecionada some. Antes ela ficava marcada
+     indefinidamente, e a próxima tecla agia sobre ela sem o Leo esperar. */
+  if(faixa() && !e.target.closest("#gridWrap, #pop, #ctx, #drawer, .modal")) limpaSelecao();
 });
 addEventListener("scroll", ()=>{ if(Date.now() - ctxAberto > 250) fechaCtx(); }, true);
 document.addEventListener("keydown", (e)=>{
@@ -2940,6 +2980,19 @@ function longaData(iso){
   const d = parseD(iso);
   return DIAS[(d.getDay()+6)%7] + ", " + d.getDate() + " de " + MESES_L[d.getMonth()];
 }
+/* A legenda só abre pelo botão da esquerda. Clicar no texto da faixa não faz nada:
+   era o que abria a legenda sem querer o tempo todo. */
+(function(){
+  const sum = document.querySelector("#legend > summary");
+  const det = document.getElementById("legend");
+  if(!sum || !det) return;
+  sum.addEventListener("click", (e)=>{ if(!e.target.closest(".lgbt")) e.preventDefault(); });
+  const bt = sum.querySelector(".lgbt");
+  if(bt) bt.addEventListener("keydown", (e)=>{
+    if(e.key === "Enter" || e.key === " "){ e.preventDefault(); det.open = !det.open; }
+  });
+})();
+
 document.getElementById("btnUndo").onclick = desfazer;
 document.getElementById("btnRedo").onclick = refazer;
 document.getElementById("btnTheme").onclick = ()=>{
