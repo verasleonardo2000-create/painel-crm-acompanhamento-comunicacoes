@@ -794,6 +794,15 @@ let euSou = "";                // e-mail de quem está logado
 let saveTimer = null, saving = false, dirty = false;
 let syncState = "wait", syncNote = "", ultimoCodigo = "";
 let cfgGravada = "";           // foto da configuração já salva
+/* e-mail -> nome, vindo da tabela perfis. O banco carimba quem alterou pelo
+   E-MAIL; sem esta tradução a barra de estado mostrava "por Leo" quando era a
+   sua própria gravação (que já sabe o seu nome) e "por crm1@betdasorte.com"
+   quando a alteração chegava de fora. */
+let nomesPorEmail = {};
+function nomeDe(email){
+  if(!email) return "";
+  return nomesPorEmail[email] || String(email).split("@")[0];
+}
 /* O que ESTA aba acabou de gravar, para reconhecer o próprio eco quando ele
    voltar pelo canal ao vivo. Antes o eco era identificado pelo autor — o que
    descartava também o que você mexe em outra aba ou no celular, deixando
@@ -939,7 +948,7 @@ function aplicaUma(p){
   gravado.set(id, r && !r.excluida_em ? JSON.stringify(linhaDb(daLinha(r))) : undefined);
   if(foraAgora) gravado.delete(id);
   render();
-  if(meta) meta = {por: (r && r.alterado_por) || "", em: (r && r.alterado_em) || new Date().toISOString()};
+  meta = {por: nomeDe(r && r.alterado_por), em: (r && r.alterado_em) || new Date().toISOString()};
   paintSync();
 }
 function chegouConfig(p){
@@ -970,7 +979,7 @@ async function carrega(){
   const [camp, cfg, perfil] = await Promise.all([
     sb.from("campanhas").select("*").is("excluida_em", null),
     sb.from("config").select("*").eq("id", 1).maybeSingle(),
-    sb.from("perfis").select("nome,papel").eq("email", euSou).maybeSingle()
+    sb.from("perfis").select("email,nome,papel")
   ]);
   if(camp.error) throw camp.error;
 
@@ -979,8 +988,11 @@ async function carrega(){
   fotografa();
 
   // quem você é vem do login, não de um campo digitado
-  me = (perfil.data && perfil.data.nome) || euSou.split("@")[0];
-  canWrite = !perfil.data ? false : perfil.data.papel === "editor";
+  nomesPorEmail = {};
+  (perfil.data || []).forEach(p => { if(p.nome) nomesPorEmail[p.email] = p.nome; });
+  const meu = (perfil.data || []).find(p => p.email === euSou);
+  me = (meu && meu.nome) || euSou.split("@")[0];
+  canWrite = !meu ? false : meu.papel === "editor";
 
   if(!seenBefore && campanhas.length && !visible().length){
     ui.range = "mes";
@@ -1905,6 +1917,15 @@ gridWrap.addEventListener("keydown", (e)=>{
   if(f && !isInput){
     if((e.ctrlKey||e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "c"){
       copiaPendente = tsvDaFaixa(f);
+      copiaLinhas = null;
+      if(f.c0 === 0 && f.c1 === NCOL - 1){           // linha(s) inteira(s)
+        copiaLinhas = {texto: copiaPendente, dados: []};
+        for(let rr = f.r0; rr <= f.r1; rr++){
+          const cc = rowCampanha(rr);
+          copiaLinhas.dados.push(cc ? {obs: cc.obs || "", link: cc.link || "",
+                                       notas: Object.assign({}, cc.notas || {})} : null);
+        }
+      }
       try{
         const ta = document.createElement("textarea");
         ta.value = copiaPendente; ta.setAttribute("readonly","");
@@ -2132,6 +2153,11 @@ document.addEventListener("keydown", (e)=>{
 });
 
 let copiaPendente = null;
+/* Copiar a LINHA INTEIRA é o jeito de duplicar uma campanha. Só que Observação,
+   Link e os comentários dos canais não são colunas da tabela — não teriam como
+   viajar no texto copiado. Então a linha inteira guarda também esses três aqui,
+   e eles são reaplicados se o texto colado for exatamente o que saiu daqui. */
+let copiaLinhas = null;   // {texto, dados:[{obs, link, notas}]}
 
 function valorDaCelula(cel){
   const camp = rowCampanha(+cel.dataset.r);
@@ -2244,11 +2270,27 @@ function aplicaColagem(r0, c0, texto, alvoFaixa){
     });
   }
 
+  /* Linha inteira colada: traz junto o que não cabe no texto. O texto precisa ser
+     exatamente o que esta aba copiou — colar de fora não dispara isto. */
+  let linhasCheias = 0;
+  if(copiaLinhas && copiaLinhas.texto === String(texto) && c0 === 0 && !alvoFaixa){
+    copiaLinhas.dados.forEach((d, dr)=>{
+      const camp = rowCampanha(r0 + dr);
+      if(camp && d){
+        camp.obs = d.obs; camp.link = d.link;
+        camp.notas = Object.assign({}, d.notas);
+        linhasCheias++;
+      }
+    });
+  }
+
   // volta o foco para onde você colou, em vez de largar a seleção no começo da tabela
   const idFoco = rowIds[r0];
   if(idFoco) pendingFocus = {id: idFoco, c: c0};
   render(); markDirty();
-  const partes = [ok + (ok===1 ? " célula colada" : " células coladas")];
+  const partes = linhasCheias
+    ? [linhasCheias + (linhasCheias===1 ? " campanha duplicada" : " campanhas duplicadas") + " — com observação, link e comentários"]
+    : [ok + (ok===1 ? " célula colada" : " células coladas")];
   if(recusados) partes.push(recusados + " sem correspondência");
   if(sobraram) partes.push(sobraram + " linha" + (sobraram>1?"s":"") + " além do fim da tabela");
   toast(partes.join(" · "));
