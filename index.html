@@ -3236,9 +3236,15 @@ document.getElementById("btnTheme").onclick = ()=>{
 
 document.getElementById("btnExport").onclick = (e)=>{
   const b = e.currentTarget;
+  /* Sem isto o ouvinte de clique da página fecha o menu no mesmo clique que o
+     abriu — o botão está fora do #pop. É a trava que o "Ajustar" já usa. */
+  cliqueVeioDoPop = true;
+  lembraPasta();   // deixa a pasta de backup pronta antes do clique na opção
   pop.innerHTML = `<div class="ph">Exportar</div>
     <button class="txtopt" data-x="json" role="menuitem"><span class="ic">↓</span>JSON — backup de tudo</button>
     <button class="txtopt" data-x="csv" role="menuitem"><span class="ic">↓</span>CSV — só o que está na tela</button>
+    ${temPasta ? `<div class="sep"></div>
+    <button class="txtopt" data-x="pasta" role="menuitem"><span class="ic">⇥</span>Salvar na pasta de backup</button>` : ``}
     <div class="sep"></div>
     <div style="font-size:11px;color:var(--ink-3);padding:2px 9px 6px;line-height:1.45">
       O JSON leva todas as campanhas, sem filtro, e serve para restaurar.
@@ -3247,14 +3253,21 @@ document.getElementById("btnExport").onclick = (e)=>{
   const rect = b.getBoundingClientRect(), p = pop.getBoundingClientRect();
   pop.style.top = (rect.bottom+6)+"px";
   pop.style.left = Math.min(rect.left, innerWidth - p.width - 8)+"px";
-  pop.querySelectorAll("[data-x]").forEach(el=> el.onclick = ()=>{ closePop(); el.dataset.x==="json"?expJSON():expCSV(); });
+  pop.querySelectorAll("[data-x]").forEach(el=> el.onclick = ()=>{
+    cliqueVeioDoPop = true;
+    const x = el.dataset.x;
+    closePop();
+    if(x === "json") expJSON(); else if(x === "csv") expCSV(); else salvaNaPasta();
+  });
 };
+/* junta a autoria só na hora de exportar — ver `auditoria` lá em cima */
+function envelopeJSON(){
+  return {v:3, exportado:TODAY,
+          campanhas: campanhas.map(c => Object.assign({}, c, auditoria.get(c.id) || {}))};
+}
 async function expJSON(){
-  /* junta a autoria só na hora de exportar — ver `auditoria` lá em cima */
-  const dados = campanhas.map(c => Object.assign({}, c, auditoria.get(c.id) || {}));
   await offer("painel-campanhas-"+TODAY+".json",
-              JSON.stringify({v:3, exportado:TODAY, campanhas:dados}, null, 2),
-              "application/json");
+              JSON.stringify(envelopeJSON(), null, 2), "application/json");
 }
 async function expCSV(){
   const rows = [["Data","Horário","Nome","Tipo","Responsável"].concat(CANAIS.map(c=>c.n), ["Pronto %","Observação","Link"])];
@@ -3265,6 +3278,57 @@ async function expCSV(){
   const csv = rows.map(r=>r.map(v=>`"${String(v==null?"":v).replace(/"/g,'""')}"`).join(",")).join("\n");
   await offer("campanhas-"+TODAY+".csv", "﻿"+csv, "text/csv");
 }
+/* ---------- salvar direto numa pasta do computador ----------
+   Só Chrome e Edge têm essa API. O navegador pede a pasta uma vez, guarda a
+   permissão, e a partir daí o painel escreve lá dentro sem perguntar o caminho.
+   A referência da pasta só cabe no IndexedDB — localStorage não guarda handle. */
+const temPasta = !!window.showDirectoryPicker;
+let pastaBackup = null;
+
+function abreIdb(){
+  return new Promise((ok, err)=>{
+    const r = indexedDB.open("painel-crm", 1);
+    r.onupgradeneeded = ()=> r.result.createObjectStore("kv");
+    r.onsuccess = ()=> ok(r.result);
+    r.onerror   = ()=> err(r.error);
+  });
+}
+function noIdb(modo, fn){
+  return abreIdb().then(db => new Promise((ok, err)=>{
+    const req = fn(db.transaction("kv", modo).objectStore("kv"));
+    req.onsuccess = ()=> ok(req.result);
+    req.onerror   = ()=> err(req.error);
+  }));
+}
+async function lembraPasta(){
+  if(!temPasta || pastaBackup) return;
+  try{ pastaBackup = await noIdb("readonly", s => s.get("pastaBackup")) || null; }catch(e){}
+}
+async function salvaNaPasta(){
+  try{
+    if(!pastaBackup){
+      pastaBackup = await showDirectoryPicker({id:"painel-backup", mode:"readwrite"});
+      try{ await noIdb("readwrite", s => s.put(pastaBackup, "pastaBackup")); }catch(e){}
+    }
+    let ok = await pastaBackup.queryPermission({mode:"readwrite"});
+    if(ok === "prompt") ok = await pastaBackup.requestPermission({mode:"readwrite"});
+    if(ok !== "granted"){ toast("Sem permissão para escrever nessa pasta"); return; }
+
+    /* nome próprio: o da rotina automática é campanhas-AAAA-MM-DD.json, e um
+       não pode sobrescrever o outro */
+    const nome = "painel-" + TODAY + ".json";
+    const arq = await pastaBackup.getFileHandle(nome, {create:true});
+    const w = await arq.createWritable();
+    await w.write(JSON.stringify(envelopeJSON(), null, 2));
+    await w.close();
+    toast("Salvo em " + pastaBackup.name + "/" + nome + " — " + campanhas.length + " campanhas");
+  }catch(e){
+    if(e && (e.name === "AbortError" || e.name === "NotAllowedError")) return;  // desistiu do seletor
+    pastaBackup = null;
+    toast("Não consegui salvar na pasta: " + ((e && e.message) || e));
+  }
+}
+
 /* Baixa o arquivo de verdade. No artefato isso não era possível — o download
    ficava a cargo do visualizador do Claude, e a saída era copiar o conteúdo.
    Como site, um link com `download` resolve; a cópia fica só de reserva. */
@@ -3273,8 +3337,10 @@ async function offer(filename, data, mime){
     const url = URL.createObjectURL(new Blob([data], {type: (mime||"text/plain")+";charset=utf-8"}));
     const a = document.createElement("a");
     a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(()=>URL.revokeObjectURL(url), 2000);
+    document.body.appendChild(a); a.click();
+    /* tirar o link no mesmo instante do clique já cancelou download em alguns
+       navegadores — some depois */
+    setTimeout(()=>{ a.remove(); URL.revokeObjectURL(url); }, 2000);
     toast("Baixando " + filename);
     return;
   }catch(e){}
