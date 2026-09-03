@@ -834,6 +834,21 @@ function nomeDe(email){
 const meusEnvios = new Map();
 let gravado = new Map();       // foto das campanhas já salvas, por id
 
+/* Quem mexeu e quando, por id. Fica FORA do objeto da campanha de propósito:
+   o objeto é copiado no duplicar e serializado no desfazer, e essas três
+   colunas viajariam junto, mentindo sobre a autoria. Só o Exportar lê daqui. */
+let auditoria = new Map();
+function guardaAuditoria(linhas){
+  (linhas || []).forEach(r=>{
+    if(!r || !r.id) return;
+    auditoria.set(r.id, {
+      criado_em:    r.criado_em    || null,
+      alterado_em:  r.alterado_em  || null,
+      alterado_por: r.alterado_por || null
+    });
+  });
+}
+
 /* ---------- tradução entre o painel e a tabela ---------- */
 function linhaDb(c){
   return {
@@ -966,9 +981,10 @@ function aplicaUma(p){
   const foraAgora = !r || r.excluida_em;
   const id = (p.new && p.new.id) || (p.old && p.old.id);
   const i = campanhas.findIndex(c => c.id === id);
-  if(foraAgora){ if(i >= 0) campanhas.splice(i, 1); }
+  if(foraAgora){ if(i >= 0) campanhas.splice(i, 1); auditoria.delete(id); }
   else if(i >= 0) campanhas[i] = daLinha(r);
   else campanhas.push(daLinha(r));
+  if(!foraAgora) guardaAuditoria([r]);
   gravado.set(id, r && !r.excluida_em ? JSON.stringify(linhaDb(daLinha(r))) : undefined);
   if(foraAgora) gravado.delete(id);
   render();
@@ -995,6 +1011,7 @@ async function recarregaDoBanco(){
   const {data, error} = await sb.from("campanhas").select("*").is("excluida_em", null);
   if(error) return;
   campanhas = data.map(daLinha);
+  guardaAuditoria(data);
   fotografa();
   render(); paintSync();
 }
@@ -1009,6 +1026,7 @@ async function carrega(){
 
   if(cfg.data) aplicaConfig(cfg.data);
   campanhas = (camp.data || []).map(daLinha);
+  guardaAuditoria(camp.data);
   fotografa();
 
   // quem você é vem do login, não de um campo digitado
@@ -3218,22 +3236,26 @@ document.getElementById("btnTheme").onclick = ()=>{
 
 document.getElementById("btnExport").onclick = (e)=>{
   const b = e.currentTarget;
-  /* O download de arquivo foi retirado de propósito: enquanto o artefato oferece
-     download, o Claude não deixa compartilhá-lo por link. Então o Exportar copia
-     o conteúdo — é o que o offer() já fazia quando o download falhava. */
   pop.innerHTML = `<div class="ph">Exportar</div>
-    <button class="txtopt" data-x="json" role="menuitem"><span class="ic">⧉</span>JSON — backup completo</button>
-    <button class="txtopt" data-x="csv" role="menuitem"><span class="ic">⧉</span>CSV — tabela do período</button>
+    <button class="txtopt" data-x="json" role="menuitem"><span class="ic">↓</span>JSON — backup de tudo</button>
+    <button class="txtopt" data-x="csv" role="menuitem"><span class="ic">↓</span>CSV — só o que está na tela</button>
     <div class="sep"></div>
     <div style="font-size:11px;color:var(--ink-3);padding:2px 9px 6px;line-height:1.45">
-      Vai para a área de transferência. Cole num arquivo em branco e salve.</div>`;
+      O JSON leva todas as campanhas, sem filtro, e serve para restaurar.
+      O CSV respeita o período e os filtros — serve para enviar a alguém.</div>`;
   pop.dataset.open = "1";
   const rect = b.getBoundingClientRect(), p = pop.getBoundingClientRect();
   pop.style.top = (rect.bottom+6)+"px";
   pop.style.left = Math.min(rect.left, innerWidth - p.width - 8)+"px";
   pop.querySelectorAll("[data-x]").forEach(el=> el.onclick = ()=>{ closePop(); el.dataset.x==="json"?expJSON():expCSV(); });
 };
-async function expJSON(){ await offer("painel-campanhas-"+TODAY+".json", JSON.stringify({v:3, exportado:TODAY, campanhas}, null, 2), "application/json"); }
+async function expJSON(){
+  /* junta a autoria só na hora de exportar — ver `auditoria` lá em cima */
+  const dados = campanhas.map(c => Object.assign({}, c, auditoria.get(c.id) || {}));
+  await offer("painel-campanhas-"+TODAY+".json",
+              JSON.stringify({v:3, exportado:TODAY, campanhas:dados}, null, 2),
+              "application/json");
+}
 async function expCSV(){
   const rows = [["Data","Horário","Nome","Tipo","Responsável"].concat(CANAIS.map(c=>c.n), ["Pronto %","Observação","Link"])];
   visible().forEach(c=>{
@@ -3243,11 +3265,21 @@ async function expCSV(){
   const csv = rows.map(r=>r.map(v=>`"${String(v==null?"":v).replace(/"/g,'""')}"`).join(",")).join("\n");
   await offer("campanhas-"+TODAY+".csv", "﻿"+csv, "text/csv");
 }
-async function offer(filename, data){
-  const dl = (window.claude && claude.use) ? await claude.use("downloads") : null;
-  if(dl){ try{ await dl.save({filename, data}); toast("Arquivo salvo"); return; }catch(e){} }
-  try{ await navigator.clipboard.writeText(data); toast("Copiado — cole num arquivo em branco e salve como " + filename); }
-  catch(e){ toast("Não consegui copiar o conteúdo neste visualizador"); }
+/* Baixa o arquivo de verdade. No artefato isso não era possível — o download
+   ficava a cargo do visualizador do Claude, e a saída era copiar o conteúdo.
+   Como site, um link com `download` resolve; a cópia fica só de reserva. */
+async function offer(filename, data, mime){
+  try{
+    const url = URL.createObjectURL(new Blob([data], {type: (mime||"text/plain")+";charset=utf-8"}));
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 2000);
+    toast("Baixando " + filename);
+    return;
+  }catch(e){}
+  try{ await navigator.clipboard.writeText(data); toast("Não deu para baixar — copiei o conteúdo, cole num arquivo e salve como " + filename); }
+  catch(e){ toast("Não consegui baixar nem copiar o conteúdo"); }
 }
 
 /* ===================== UTIL ===================== */
