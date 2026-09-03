@@ -154,6 +154,9 @@ select.field{padding-right:26px;appearance:none;
 .pill .cv{margin-left:auto;font-size:10px;opacity:.62;font-style:normal;line-height:1;transform:translateY(1px)}
 .pill[data-solid]{background:color-mix(in srgb,var(--c) 17%,transparent);border-color:color-mix(in srgb,var(--c) 40%,transparent)}
 /* NC é ausência de trabalho: tem que ser o item mais silencioso da linha, nos dois temas */
+.pill[data-s="vazio"]{background:transparent;border-color:transparent;color:var(--ink-3);
+  opacity:.45;font-weight:400;padding-left:11px}
+.cellv.stcell:hover .pill.clic[data-s="vazio"]{background:var(--surface-3);border-color:transparent}
 .pill[data-s="nc"]{color:var(--ink-3);font-weight:500;
   background:color-mix(in srgb,var(--ink-3) 10%,transparent);
   border-color:color-mix(in srgb,var(--ink-3) 18%,transparent)}
@@ -629,6 +632,10 @@ const STATUS_BASE = {
   cancelado:    {label:"Cancelado",     c:"cancel", kind:"skip", solid:true},
   indisponivel: {label:"Indisponível",  c:"indisp", kind:"skip"},
   nc:           {label:"NC",            c:"nc",     kind:"skip"},
+  /* Deixa a célula em branco. É "skip" como o NC — não entra no cálculo de
+     progresso —, mas serve para "ainda não decidi", enquanto NC quer dizer
+     "esta campanha não tem esse canal". */
+  vazio:        {label:"—",             c:"nc",     kind:"skip"},
 };
 /* status aposentados → o que passa a valer no lugar */
 const MIGRA = {falta_redacao:"falta_subir", redacao_ok:"falta_subir"};
@@ -660,6 +667,11 @@ const COLUNAS_PADRAO = {
   inbox:   _PI.slice(),  push:_PI.slice(),
   banner:  ["falta_subir","ajustar","single","first","nc","cancelado"],
 };
+/* "vazio" fica disponível em todas as colunas, no fim da lista para não mexer
+   na numeração dos atalhos que já existiam. */
+Object.keys(COLUNAS_PADRAO).forEach(k=>{
+  if(!COLUNAS_PADRAO[k].includes("vazio")) COLUNAS_PADRAO[k].push("vazio");
+});
 let colunas = JSON.parse(JSON.stringify(COLUNAS_PADRAO));
 function optsDe(ch){ const l = colunas[ch]; return (l && l.length) ? l : ["nc"]; }
 /* onde desenhar o respiro entre blocos de colunas */
@@ -2342,6 +2354,19 @@ function closePop(voltarFoco){
     if(r >= 0) focusCell(r, ctx.colIdx);
   }
 }
+/* Sai do popup sem alterar nada e vai para a célula do lado, como numa planilha.
+   Precisa guardar o contexto antes de fechar — closePop() zera o popCtx. */
+function fechaPopEAndar(dc){
+  const ctx = popCtx; if(!ctx) return;
+  const r = rowIds.indexOf(ctx.id);
+  closePop();
+  if(r < 0) return;
+  let nr = r, nc = ctx.colIdx + dc;
+  if(nc < 0){ nc = NCOL - 1; nr = Math.max(0, r - 1); }
+  if(nc > NCOL - 1){ nc = 0; nr = Math.min(rowIds.length - 1, r + 1); }
+  ancoraEm(nr, nc); focusCell(nr, nc);
+}
+
 /* setas andam entre os status; Enter aplica; Esc volta para a célula */
 pop.addEventListener("keydown", (e)=>{
   if(e.target.tagName === "TEXTAREA") return;      // o comentário do ajuste é campo livre
@@ -2357,6 +2382,9 @@ pop.addEventListener("keydown", (e)=>{
     case "End":       vai(opcoes.length-1); return;
     case "Escape":    closePop(true); e.preventDefault(); return;
     case "Tab":       closePop(true); e.preventDefault(); return;
+    // seta para o lado: mantém o que estava, fecha e anda para a célula vizinha
+    case "ArrowLeft":  fechaPopEAndar(-1); e.preventDefault(); return;
+    case "ArrowRight": fechaPopEAndar(1);  e.preventDefault(); return;
   }
   const n = parseInt(e.key,10);
   if(!isNaN(n) && n>=1 && n<=opcoes.length){ opcoes[n-1].click(); e.preventDefault(); }
