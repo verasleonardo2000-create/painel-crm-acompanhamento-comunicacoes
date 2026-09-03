@@ -395,6 +395,29 @@ tr.addrow td{border-bottom:0;padding:10px 14px 12px}
 .popnote .row{display:flex;gap:6px;align-items:center}
 .popnote .hint{font-size:10.5px;color:var(--ink-3);margin-left:auto}
 
+/* menu de coluna: ordenar e filtrar por valores, no botão direito do cabeçalho */
+.pop.colmenu{width:264px;max-height:min(78vh,540px);overflow:hidden;flex-direction:column}
+.pop.colmenu[data-open]{display:flex}
+.colmenu .fbusca{height:30px;margin:2px 6px 6px;border:1px solid var(--line);border-radius:8px;
+  background:var(--surface-2);padding:0 9px;font-size:12.5px;color:var(--ink);outline:none}
+.colmenu .fbusca:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.colmenu .fatalhos{display:flex;align-items:center;gap:7px;padding:0 9px 7px;font-size:11.5px;color:var(--ink-3)}
+.colmenu .fatalhos button{color:var(--accent);font-size:11.5px;padding:0}
+.colmenu .fatalhos button:hover{text-decoration:underline}
+.colmenu .fconta{margin-left:auto;font-variant-numeric:tabular-nums}
+.colmenu .flista{flex:1;min-height:60px;overflow:auto;padding:5px 2px;
+  border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.colmenu .flista label{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:7px;
+  font-size:12.5px;color:var(--ink-2);cursor:pointer}
+.colmenu .flista label:hover{background:var(--surface-3);color:var(--ink)}
+.colmenu .flista input{accent-color:var(--accent);width:14px;height:14px;flex:0 0 auto;cursor:pointer}
+.colmenu .flista label > span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.colmenu .flista em{color:var(--ink-3);font-style:italic}
+.colmenu .ffoot{display:flex;gap:6px;justify-content:flex-end;padding:9px 6px 3px}
+/* marca no cabeçalho da coluna filtrada ou ordenada */
+th .thmk{margin-left:5px;color:var(--accent)}
+th .thmk svg{vertical-align:-1px}
+
 .scrim{position:fixed;inset:0;background:rgba(10,11,14,.36);backdrop-filter:blur(2px);z-index:150;opacity:0;
   pointer-events:none;transition:opacity .2s}
 .scrim[data-open]{opacity:1;pointer-events:auto}
@@ -586,6 +609,7 @@ textarea.askinput.alto{height:auto;min-height:96px;resize:vertical;padding:9px 1
 
 <div class="pop" id="pop" role="menu"></div>
 <div class="pop ctx" id="ctx" role="menu"></div>
+<div class="pop colmenu" id="colmenu" role="dialog" aria-label="Ordenar e filtrar a coluna"></div>
 <div class="scrim" id="scrim"></div>
 
 <aside class="drawer" id="drawer" aria-hidden="true" aria-label="Detalhes da campanha">
@@ -1213,9 +1237,63 @@ function ocultasPorIdade(){
   return campanhas.filter(c=> velha(c) && matchFilters(c)).length;
 }
 
+/* ===================== FILTRO E ORDEM POR COLUNA =====================
+   Convive com os filtros da barra de cima em vez de disputar com eles: o painel
+   aplica primeiro aqueles e, sobre o que sobrou, aplica estes. O filtro de coluna
+   só consegue TIRAR linhas — nunca traz de volta o que a barra já escondeu. */
+let ordem = null;        // {k, dir:1|-1}
+let filtroCol = {};      // {k: Set(valores permitidos)}
+
+/* o texto que a pessoa vê na célula — é por ele que se filtra */
+function valorDe(c, col){
+  if(col.kind === "status") return S(c.canais[col.k] || "nc").label;
+  if(col.kind === "date")   return c.data ? dataBR(c.data) : "";
+  return c[col.k] || "";
+}
+function passaFiltroColuna(c, exceto){
+  for(const k in filtroCol){
+    if(k === exceto) continue;
+    const col = COLS.find(x => x.k === k); if(!col) continue;
+    if(!filtroCol[k].has(valorDe(c, col))) return false;
+  }
+  return true;
+}
+/* Os valores oferecidos no menu saem do que está visível AGORA, ignorando só o
+   filtro da própria coluna — senão você não conseguiria voltar atrás num valor
+   que acabou de excluir. */
+function valoresDaColuna(k){
+  const col = COLS.find(x => x.k === k), esconde = arquivando();
+  const base = campanhas.filter(c => !(esconde && velha(c)) && inRange(c)
+                                  && matchFilters(c) && passaFiltroColuna(c, k));
+  return [...new Set(base.map(c => valorDe(c, col)))]
+    .sort((a,b) => (!a) - (!b) || a.localeCompare(b, "pt", {sensitivity:"base"}));
+}
+/* Data e hora vão pelo relógio; status vai pela ordem da própria lista da coluna
+   (que é a ordem do trabalho, não a do alfabeto); o resto vai por A-Z. */
+function cmpColuna(a, b, col){
+  if(col.kind === "date") return String(a.data || "~").localeCompare(String(b.data || "~"));
+  if(col.kind === "time") return String(a.hora || "~").localeCompare(String(b.hora || "~"));
+  if(col.kind === "status"){
+    const l = optsDe(col.k);
+    const ia = l.indexOf(a.canais[col.k] || "nc"), ib = l.indexOf(b.canais[col.k] || "nc");
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  }
+  const va = a[col.k] || "", vb = b[col.k] || "";
+  if(!va !== !vb) return va ? -1 : 1;                     // vazio sempre por último
+  return va.localeCompare(vb, "pt", {sensitivity:"base"});
+}
+function colunaOrdenada(){ return ordem ? COLS.find(x => x.k === ordem.k) : null; }
+function quantasFiltradas(){ return Object.keys(filtroCol).length; }
+function limpaFiltrosColuna(){ filtroCol = {}; ordem = null; render(); }
+
 function visible(){
   const esconde = arquivando();
-  return campanhas.filter(c=>!(esconde && velha(c)) && inRange(c) && matchFilters(c)).sort((a,b)=>{
+  const lista = campanhas.filter(c => !(esconde && velha(c)) && inRange(c)
+                                   && matchFilters(c) && passaFiltroColuna(c));
+  const col = colunaOrdenada();
+  if(col) return lista.sort((a,b)=> ordem.dir * cmpColuna(a,b,col)
+      || String(a.data).localeCompare(b.data) || String(a.nome).localeCompare(b.nome));
+  return lista.sort((a,b)=>{
     // linha recém-criada (ainda sem nome) fica no fim, onde você acabou de clicar
     const na = a.nome ? 0 : 1, nb = b.nome ? 0 : 1;
     if(na !== nb) return na - nb;
@@ -1412,7 +1490,12 @@ function renderGrid(){
   let h = `<table class="grid"><colgroup>`
     + COLS.map(c=>`<col style="width:${larguraDe(c)}px">`).join("")
     + `<col style="width:92px"><col style="width:40px"></colgroup><thead><tr>`
-    + COLS.map((c,i)=>`<th class="${i<NSTICKY?`sk sk${i}`:""}"${c.kind==="status"&&gstart(c)?" data-gstart":""}>${c.n}<span class="rz" data-rz="${i}" title="Arraste para mudar a largura · duplo clique volta ao padrão"></span></th>`).join("")
+    + COLS.map((c,i)=>{
+        const mk = (filtroCol[c.k] ? `<span class="thmk" title="Coluna filtrada">${FUNIL}</span>` : "")
+                 + (ordem && ordem.k === c.k ? `<span class="thmk" title="Coluna ordenada">${ordem.dir>0?"▲":"▼"}</span>` : "");
+        return `<th class="${i<NSTICKY?`sk sk${i}`:""}"${c.kind==="status"&&gstart(c)?" data-gstart":""}
+          title="Botão direito: ordenar e filtrar">${c.n}${mk}<span class="rz" data-rz="${i}" title="Arraste para mudar a largura · duplo clique volta ao padrão"></span></th>`;
+      }).join("")
     + `<th class="c">Pronto</th><th></th></tr></thead><tbody>`;
 
   let prev = null;
@@ -1461,6 +1544,14 @@ function aplicaLarguras(){
 function renderGridFoot(n, podeAdicionar, ocultas){
   /* o aviso das antigas so existe quando ha algo escondido — nada de controle
      permanente na tela para uma situacao que quase nunca acontece */
+  /* filtro de coluna é fácil de esquecer: sem este aviso, campanha some e a pessoa
+     acha que perdeu. */
+  const nf = quantasFiltradas();
+  const filtros = (nf || ordem)
+    ? `<span class="vsep"></span><span style="color:var(--accent);font-weight:600">${
+        nf ? nf + (nf===1 ? " coluna filtrada" : " colunas filtradas") : "ordenado por coluna"
+      }</span><button class="btn sm" id="btnLimpaCol">Limpar</button>`
+    : "";
   const antigas = ocultas
     ? `<span class="vsep"></span><button class="btn sm" id="btnAntigas">
          Mostrar ${ocultas} de mais de ${DIAS_ARQUIVO} dias</button>`
@@ -1473,10 +1564,12 @@ function renderGridFoot(n, podeAdicionar, ocultas){
        <span><kbd>Shift</kbd>+clique ou <kbd>Shift</kbd>+setas seleciona a faixa ·
        <kbd>F2</kbd> ou duplo clique edita · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> ·
        <kbd>Ctrl</kbd>+<kbd>Z</kbd> desfaz · <kbd>Ctrl</kbd>+<kbd>↵</kbd> nova linha ·
-       no status, <kbd>1</kbd>–<kbd>9</kbd> aplica direto</span>${antigas}`
-    : `<span>${n} campanha${n===1?"":"s"} no período</span><span class="vsep"></span><span>Limpe os filtros para poder adicionar campanhas.</span>`;
+       no status, <kbd>1</kbd>–<kbd>9</kbd> aplica direto</span>${filtros}${antigas}`
+    : `<span>${n} campanha${n===1?"":"s"} no período</span><span class="vsep"></span><span>Limpe os filtros para poder adicionar campanhas.</span>${filtros}`;
   const b = document.getElementById("btnAntigas");
   if(b) b.onclick = ()=>{ verAntigas = !verAntigas; render(); };
+  const bf = document.getElementById("btnLimpaCol");
+  if(bf) bf.onclick = limpaFiltrosColuna;
 }
 
 /* ---------- timeline ---------- */
@@ -2081,6 +2174,7 @@ document.addEventListener("click", (e)=>{
   const op = e.target.closest("[data-open]");
   if(op){ openDrawer(op.dataset.open); return; }
   if(!e.target.closest("#ctx")) fechaCtx();
+  if(!e.target.closest("#colmenu")) fechaMenuColuna();
   const pastilha = e.target.closest("[data-abrepop]");
   if(pastilha){
     const cel = pastilha.closest("[data-kind='status']");
@@ -2133,6 +2227,7 @@ document.addEventListener("keydown", (e)=>{
   }
   if(e.key === "Escape"){
     if(askModal.dataset.open){ respondeAsk(false); return; }
+    if(colmenu.dataset.open){ fechaMenuColuna(); return; }
     if(ctxMenu.dataset.open){ fechaCtx(); return; }
     if(stModal.dataset.open){ fechaEditorStatus(); return; }
     closePop(); closeDrawer(); return;
@@ -2585,6 +2680,76 @@ function abreMenu(titulo, itens, x, y, aoEscolher){
 }
 function fechaCtx(){ delete ctxMenu.dataset.open; }
 
+/* ===================== MENU DA COLUNA ===================== */
+const colmenu = document.getElementById("colmenu");
+const FUNIL = '<svg viewBox="0 0 12 12" width="9" height="9" aria-hidden="true"><path d="M1.2 2h9.6L7.1 6.4V10L4.9 8.8V6.4z" fill="currentColor"/></svg>';
+function fechaMenuColuna(){ delete colmenu.dataset.open; }
+
+function abreMenuColuna(k, x, y){
+  const col = COLS.find(c => c.k === k); if(!col) return;
+  fechaCtx(); closePop();
+  const vals = valoresDaColuna(k);
+  const sel = filtroCol[k];
+  /* Rótulos conforme o que a coluna guarda: "A a Z" não diz nada para datas
+     nem para status, cuja ordem útil é a da própria lista da coluna. */
+  const rot = col.kind === "date"   ? ["Mais antigas primeiro", "Mais recentes primeiro"]
+            : col.kind === "time"   ? ["Mais cedo primeiro", "Mais tarde primeiro"]
+            : col.kind === "status" ? ["Ordenar pela lista da coluna", "Ordenar ao contrário"]
+            :                         ["Classificar A → Z", "Classificar Z → A"];
+
+  colmenu.innerHTML = `<div class="ph">${esc(col.n)}</div>
+    <button class="txtopt" data-ord="1"><span class="ic">↑</span>${rot[0]}</button>
+    <button class="txtopt" data-ord="-1"><span class="ic">↓</span>${rot[1]}</button>
+    ${ordem && ordem.k === k ? `<button class="txtopt" data-ord="0"><span class="ic">×</span>Tirar a ordenação</button>` : ""}
+    <div class="sep"></div>
+    <div class="ph">Filtrar por valores</div>
+    <input class="fbusca" type="search" placeholder="Buscar…" autocomplete="off" aria-label="Buscar valor">
+    <div class="fatalhos"><button data-todos>Selecionar tudo</button><span>·</span>
+      <button data-nenhum>Limpar</button><span class="fconta"></span></div>
+    <div class="flista">${
+      vals.length
+        ? vals.map(v => `<label><input type="checkbox" value="${esc(v)}"${(!sel || sel.has(v)) ? " checked" : ""}>
+            <span>${v ? esc(v) : "<em>(em branco)</em>"}</span></label>`).join("")
+        : `<div style="padding:10px;font-size:12px;color:var(--ink-3)">Nada para filtrar aqui.</div>`}</div>
+    <div class="ffoot"><button class="btn sm" data-cancel>Cancelar</button>
+      <button class="btn sm primary" data-ok>Aplicar</button></div>`;
+
+  colmenu.dataset.open = "1";
+  const b = colmenu.getBoundingClientRect();
+  colmenu.style.top  = Math.min(Math.max(8, y), innerHeight - b.height - 8) + "px";
+  colmenu.style.left = Math.min(Math.max(8, x), innerWidth  - b.width  - 8) + "px";
+
+  const caixas = ()=> [...colmenu.querySelectorAll(".flista input")];
+  const visiveis = ()=> caixas().filter(i => i.closest("label").style.display !== "none");
+  const conta = ()=>{ const m = caixas().filter(i=>i.checked).length;
+    colmenu.querySelector(".fconta").textContent = m + " de " + caixas().length; };
+  conta();
+
+  colmenu.querySelectorAll("[data-ord]").forEach(b2 => b2.onclick = ()=>{
+    const d = +b2.dataset.ord;
+    ordem = d ? {k, dir:d} : null;
+    fechaMenuColuna(); render();
+  });
+  colmenu.querySelector(".fbusca").oninput = (ev)=>{
+    const q = semAcento(ev.target.value);
+    caixas().forEach(i=>{
+      const txt = semAcento(i.closest("label").textContent);
+      i.closest("label").style.display = (!q || txt.includes(q)) ? "" : "none";
+    });
+  };
+  colmenu.querySelector("[data-todos]").onclick = ()=>{ visiveis().forEach(i=>i.checked=true); conta(); };
+  colmenu.querySelector("[data-nenhum]").onclick = ()=>{ visiveis().forEach(i=>i.checked=false); conta(); };
+  colmenu.querySelector(".flista").onchange = conta;
+  colmenu.querySelector("[data-cancel]").onclick = fechaMenuColuna;
+  colmenu.querySelector("[data-ok]").onclick = ()=>{
+    const marcadas = caixas().filter(i=>i.checked).map(i=>i.value);
+    if(!caixas().length || marcadas.length === caixas().length) delete filtroCol[k];  // tudo marcado = sem filtro
+    else filtroCol[k] = new Set(marcadas);
+    fechaMenuColuna(); render();
+  };
+  setTimeout(()=>{ const f = colmenu.querySelector(".fbusca"); if(f) f.focus(); }, 20);
+}
+
 /* menu de uma campanha; `cel` é a célula sob o cursor, quando houver */
 function abreCtx(id, x, y, cel){
   const c = byId(id); if(!c) return;
@@ -2662,6 +2827,13 @@ gridWrap.addEventListener("contextmenu", (e)=>{
   const linha = e.target.closest("tr");
   e.preventDefault();
   closePop();
+  // botão direito no cabeçalho: ordenar e filtrar aquela coluna
+  const th = e.target.closest("thead th");
+  if(th){
+    const i = [...gridWrap.querySelectorAll("thead th")].indexOf(th);
+    if(i >= 0 && i < NCOL) abreMenuColuna(COLS[i].k, e.clientX, e.clientY);
+    return;
+  }
   if(!linha || linha.classList.contains("addrow")){
     abreMenu("", [{k:"nova", label:"Nova campanha", ic:"＋"}], e.clientX, e.clientY, ()=>novaPelaTabela());
     return;
