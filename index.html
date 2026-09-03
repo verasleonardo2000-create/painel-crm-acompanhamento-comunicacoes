@@ -1817,6 +1817,11 @@ gridWrap.addEventListener("keydown", (e)=>{
   const r = +el.dataset.r, c = +el.dataset.c;
   const isStatus  = el.dataset.kind === "status";
   const isLista   = el.dataset.kind === "lista";
+  // popup aberto com o foco na própria célula: a seta lateral fecha e anda uma vez só
+  if(pop.dataset.open && /^Arrow(Left|Right)$/.test(e.key)
+     && !e.ctrlKey && !e.metaKey && !e.altKey && el.tagName !== "INPUT"){
+    fechaPopEAndar(e.key === "ArrowLeft" ? -1 : 1); e.preventDefault(); return;
+  }
   const isDisplay = el.classList.contains("cellv");
   const isInput   = el.tagName === "INPUT";
   const isTexto   = isInput && el.type === "text";
@@ -2040,6 +2045,17 @@ document.addEventListener("click", (e)=>{
 });
 addEventListener("scroll", ()=>{ if(Date.now() - ctxAberto > 250) fechaCtx(); }, true);
 document.addEventListener("keydown", (e)=>{
+  /* Popup aberto e seta para o lado: fecha mantendo o valor e anda — esteja o foco
+     onde estiver. Isto precisa vir ANTES da regra de "seta sem nada selecionado":
+     quando o status é "Ajustar" (ou o canal tem comentário) o popup abre no campo
+     de texto e nenhuma opção fica focada, então a tecla não chegava ao popup e
+     acabava jogando o cursor para a primeira célula da tabela. */
+  if(pop.dataset.open && /^Arrow(Left|Right)$/.test(e.key)
+     && !e.ctrlKey && !e.metaKey && !e.altKey){
+    const a = document.activeElement;
+    const emTexto = a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT");
+    if(!emTexto){ fechaPopEAndar(e.key === "ArrowLeft" ? -1 : 1); e.preventDefault(); return; }
+  }
   /* seta com nada selecionado: entra na primeira célula da tabela, aí já dá para navegar */
   if(/^Arrow(Up|Down|Left|Right)$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey
      && ui.view === "tabela" && rowIds.length){
