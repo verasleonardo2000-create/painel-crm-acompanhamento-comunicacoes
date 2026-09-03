@@ -3244,7 +3244,7 @@ document.getElementById("btnExport").onclick = (e)=>{
     <button class="txtopt" data-x="json" role="menuitem"><span class="ic">↓</span>JSON — backup de tudo</button>
     <button class="txtopt" data-x="csv" role="menuitem"><span class="ic">↓</span>CSV — só o que está na tela</button>
     ${temPasta ? `<div class="sep"></div>
-    <button class="txtopt" data-x="pasta" role="menuitem"><span class="ic">⇥</span>Salvar na pasta de backup</button>` : ``}
+    <button class="txtopt" data-x="pasta" role="menuitem"><span class="ic">⇥</span>Salvar os dois na pasta de backup</button>` : ``}
     <div class="sep"></div>
     <div style="font-size:11px;color:var(--ink-3);padding:2px 9px 6px;line-height:1.45">
       O JSON leva todas as campanhas, sem filtro, e serve para restaurar.
@@ -3269,15 +3269,16 @@ async function expJSON(){
   await offer("painel-campanhas-"+TODAY+".json",
               JSON.stringify(envelopeJSON(), null, 2), "application/json");
 }
-async function expCSV(){
+/* o CSV sai do que está na tela — período e filtros valem aqui */
+function csvTexto(){
   const rows = [["Data","Horário","Nome","Tipo","Responsável"].concat(CANAIS.map(c=>c.n), ["Pronto %","Observação","Link"])];
   visible().forEach(c=>{
     const s = statsOf(c);
     rows.push([c.data,c.hora,c.nome,c.tipo,c.resp].concat(CANAIS.map(ch=>S(c.canais[ch.k]).label), [s.rel?s.pct+"%":"", c.obs||"", c.link||""]));
   });
-  const csv = rows.map(r=>r.map(v=>`"${String(v==null?"":v).replace(/"/g,'""')}"`).join(",")).join("\n");
-  await offer("campanhas-"+TODAY+".csv", "﻿"+csv, "text/csv");
+  return "﻿" + rows.map(r=>r.map(v=>`"${String(v==null?"":v).replace(/"/g,'""')}"`).join(",")).join("\n");
 }
+async function expCSV(){ await offer("campanhas-"+TODAY+".csv", csvTexto(), "text/csv"); }
 /* ---------- salvar direto numa pasta do computador ----------
    Só Chrome e Edge têm essa API. O navegador pede a pasta uma vez, guarda a
    permissão, e a partir daí o painel escreve lá dentro sem perguntar o caminho.
@@ -3304,6 +3305,12 @@ async function lembraPasta(){
   if(!temPasta || pastaBackup) return;
   try{ pastaBackup = await noIdb("readonly", s => s.get("pastaBackup")) || null; }catch(e){}
 }
+async function escreveNaPasta(nome, conteudo){
+  const arq = await pastaBackup.getFileHandle(nome, {create:true});
+  const w = await arq.createWritable();
+  await w.write(conteudo);
+  await w.close();
+}
 async function salvaNaPasta(){
   try{
     if(!pastaBackup){
@@ -3316,12 +3323,14 @@ async function salvaNaPasta(){
 
     /* nome próprio: o da rotina automática é campanhas-AAAA-MM-DD.json, e um
        não pode sobrescrever o outro */
-    const nome = "painel-" + TODAY + ".json";
-    const arq = await pastaBackup.getFileHandle(nome, {create:true});
-    const w = await arq.createWritable();
-    await w.write(JSON.stringify(envelopeJSON(), null, 2));
-    await w.close();
-    toast("Salvo em " + pastaBackup.name + "/" + nome + " — " + campanhas.length + " campanhas");
+    await escreveNaPasta("painel-" + TODAY + ".json", JSON.stringify(envelopeJSON(), null, 2));
+    await escreveNaPasta("painel-" + TODAY + ".csv",  csvTexto());
+
+    /* o CSV sai filtrado: dizer quantas linhas ele levou evita guardar um
+       recorte achando que é a lista inteira */
+    const naTela = visible().length;
+    toast("Salvo em " + pastaBackup.name + ": JSON com " + campanhas.length + " campanhas"
+          + " · CSV com " + naTela + (naTela < campanhas.length ? " (a tela está filtrada)" : ""));
   }catch(e){
     if(e && (e.name === "AbortError" || e.name === "NotAllowedError")) return;  // desistiu do seletor
     pastaBackup = null;
