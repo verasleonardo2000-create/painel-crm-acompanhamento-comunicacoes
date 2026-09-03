@@ -1817,10 +1817,10 @@ gridWrap.addEventListener("keydown", (e)=>{
   const r = +el.dataset.r, c = +el.dataset.c;
   const isStatus  = el.dataset.kind === "status";
   const isLista   = el.dataset.kind === "lista";
-  // popup aberto com o foco na própria célula: a seta lateral fecha e anda uma vez só
-  if(pop.dataset.open && /^Arrow(Left|Right)$/.test(e.key)
+  // popup aberto e o foco caiu na célula: a seta pertence ao popup, não à grade
+  if(pop.dataset.open && /^Arrow(Left|Right|Up|Down)$/.test(e.key)
      && !e.ctrlKey && !e.metaKey && !e.altKey && el.tagName !== "INPUT"){
-    fechaPopEAndar(e.key === "ArrowLeft" ? -1 : 1); e.preventDefault(); return;
+    setaComPopupAberto(e.key); e.preventDefault(); return;
   }
   const isDisplay = el.classList.contains("cellv");
   const isInput   = el.tagName === "INPUT";
@@ -2041,7 +2041,8 @@ document.addEventListener("click", (e)=>{
     lcel.focus({preventScroll:true}); abreLista(lcel); return;
   }
   recliqueStatus = false;
-  if(!e.target.closest("#pop")) closePop();
+  if(!e.target.closest("#pop") && !cliqueVeioDoPop) closePop();
+  cliqueVeioDoPop = false;
 });
 addEventListener("scroll", ()=>{ if(Date.now() - ctxAberto > 250) fechaCtx(); }, true);
 document.addEventListener("keydown", (e)=>{
@@ -2050,11 +2051,12 @@ document.addEventListener("keydown", (e)=>{
      quando o status é "Ajustar" (ou o canal tem comentário) o popup abre no campo
      de texto e nenhuma opção fica focada, então a tecla não chegava ao popup e
      acabava jogando o cursor para a primeira célula da tabela. */
-  if(pop.dataset.open && /^Arrow(Left|Right)$/.test(e.key)
+  if(pop.dataset.open && /^Arrow(Left|Right|Up|Down)$/.test(e.key)
      && !e.ctrlKey && !e.metaKey && !e.altKey){
     const a = document.activeElement;
     const emTexto = a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT");
-    if(!emTexto){ fechaPopEAndar(e.key === "ArrowLeft" ? -1 : 1); e.preventDefault(); return; }
+    const dentroDoPop = a && a.closest && a.closest("#pop");
+    if(!emTexto && !dentroDoPop){ setaComPopupAberto(e.key); e.preventDefault(); return; }
   }
   /* seta com nada selecionado: entra na primeira célula da tabela, aí já dá para navegar */
   if(/^Arrow(Up|Down|Left|Right)$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey
@@ -2242,6 +2244,11 @@ async function copiaTexto(txt){
 
 const pop = document.getElementById("pop");
 let popCtx = null;   // {id, ch, colIdx, anchor}
+/* Escolher uma opção redesenha o conteúdo do popup — e isso ARRANCA do documento
+   o botão que acabou de ser clicado. Quando o clique termina de subir até o
+   documento, `closest("#pop")` já não encontra nada e o painel concluiria que o
+   clique foi fora, fechando o popup na hora errada. Esta marca diz a verdade. */
+let cliqueVeioDoPop = false;
 
 function openPop(btn){
   popCtx = {id: rowIds[+btn.dataset.r], ch: btn.dataset.ch, colIdx: +btn.dataset.c, anchor: btn};
@@ -2272,6 +2279,7 @@ function desenhaListaPop(){
   if(sel) sel.focus({preventScroll:true});
 
   pop.querySelectorAll("[data-lista]").forEach(b => b.onclick = async ()=>{
+    cliqueVeioDoPop = true;
     let v = b.dataset.lista;
     if(v === OUTRO){
       closePop();
@@ -2310,10 +2318,16 @@ function desenhaPop(){
   pop.dataset.open = "1";
   posicionaPop(anchor);
   // o teclado passa a andar dentro do popup: setas trocam a opção, Enter aplica
+  /* Foca a opção atual SEMPRE, inclusive quando existe campo de comentário.
+     Antes, com "Ajustar" nenhuma opção era focada e o teclado ficava sem dono:
+     as setas escapavam para a grade e mexiam na célula em vez da lista.
+     Quem acabou de ESCOLHER "ajustar" continua caindo direto no comentário —
+     isso é feito logo depois, no clique da opção. */
   const atual = pop.querySelector('.popt[aria-current="true"]') || pop.querySelector(".popt");
-  if(atual && !precisaNota) atual.focus({preventScroll:true});
+  if(atual) atual.focus({preventScroll:true});
 
   pop.querySelectorAll("[data-set]").forEach(b=> b.onclick = ()=>{
+    cliqueVeioDoPop = true;
     const val = b.dataset.set;
     aplicaStatus(id, ch, val);
     if(val === "ajustar"){ desenhaPop(); setTimeout(()=>{ const t = pop.querySelector("#popNota"); if(t) t.focus(); }, 20); }
@@ -2332,7 +2346,7 @@ function desenhaPop(){
       if(v) cc.notas[ch] = v; else delete cc.notas[ch];
       render(); markDirty();
     };
-    pop.querySelector("[data-savenote]").onclick = ()=>{ salva(); closePop(); };
+    pop.querySelector("[data-savenote]").onclick = ()=>{ cliqueVeioDoPop = true; salva(); closePop(); };
     ta.onkeydown = (e)=>{
       if(e.key === "Enter" && (e.ctrlKey||e.metaKey)){ salva(); closePop(); e.preventDefault(); }
       if(e.key === "Escape"){ salva(); closePop(); e.preventDefault(); }
@@ -2370,6 +2384,18 @@ function closePop(voltarFoco){
     if(r >= 0) focusCell(r, ctx.colIdx);
   }
 }
+/* Seta pressionada com o popup aberto e o foco fora dele: para os lados, sai e
+   anda; para cima e para baixo, entra na lista. A partir daí quem manda é o
+   próprio popup. */
+function setaComPopupAberto(key){
+  if(key === "ArrowLeft" || key === "ArrowRight"){
+    fechaPopEAndar(key === "ArrowLeft" ? -1 : 1); return;
+  }
+  const opcoes = [...pop.querySelectorAll(".popt")];
+  if(!opcoes.length) return;
+  opcoes[key === "ArrowDown" ? 0 : opcoes.length - 1].focus({preventScroll:true});
+}
+
 /* Sai do popup sem alterar nada e vai para a célula do lado, como numa planilha.
    Precisa guardar o contexto antes de fechar — closePop() zera o popCtx. */
 function fechaPopEAndar(dc){
